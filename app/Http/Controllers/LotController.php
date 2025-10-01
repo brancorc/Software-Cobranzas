@@ -10,14 +10,17 @@ class LotController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Lot::with('client');
+        $query = Lot::with('client:id,name');
 
         if ($request->has('search')) {
-            $query->where('identifier', 'like', '%' . $request->search . '%')
-                  ->orWhere('status', 'like', '%' . $request->search . '%')
-                  ->orWhereHas('client', function ($q) use ($request) {
-                      $q->where('name', 'like', '%' . $request->search . '%');
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('identifier', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('status', 'like', '%' . $searchTerm . '%')
+                  ->orWhereHas('client', function ($clientQuery) use ($searchTerm) {
+                      $clientQuery->where('name', 'like', '%' . $searchTerm . '%');
                   });
+            });
         }
         
         $lots = $query->latest()->paginate(10);
@@ -27,7 +30,7 @@ class LotController extends Controller
 
     public function create()
     {
-        $clients = Client::orderBy('name')->get();
+        $clients = Client::select('id', 'name')->orderBy('name')->get();
         return view('lots.create', compact('clients'));
     }
 
@@ -42,14 +45,23 @@ class LotController extends Controller
 
         Lot::create($validated);
 
-        return redirect()->route('lots.index')->with('success', 'Lote creado exitosamente.');
+        return redirect()->route('lots.index')
+            ->with('success', 'Lote creado exitosamente.');
     }
 
     public function edit(Lot $lot)
     {
-        // Carga las relaciones, incluyendo las anidadas para obtener los nombres de los clientes.
-        $lot->load('ownershipHistory.previousClient', 'ownershipHistory.newClient');
-        $clients = Client::orderBy('name')->get();
+        // Solo cargar historial si existe
+        if ($lot->ownershipHistory()->exists()) {
+            $lot->load([
+                'ownershipHistory' => function ($query) {
+                    $query->with(['previousClient:id,name', 'newClient:id,name'])
+                          ->latest('transfer_date');
+                }
+            ]);
+        }
+        
+        $clients = Client::select('id', 'name')->orderBy('name')->get();
         
         return view('lots.edit', compact('lot', 'clients'));
     }
@@ -63,26 +75,32 @@ class LotController extends Controller
             'client_id' => 'nullable|exists:clients,id',
         ]);
         
-        // Si se asigna un cliente a un lote disponible, el estado cambia a 'vendido'.
+        // Si se asigna un cliente a un lote disponible, el estado cambia a 'vendido'
         if ($validated['client_id'] && $lot->status == 'disponible') {
             $validated['status'] = 'vendido';
         }
 
-        // Si se desasigna un cliente, el lote vuelve a estar disponible.
+        // Si se desasigna un cliente, el lote vuelve a estar disponible
         if (is_null($validated['client_id'])) {
             $validated['status'] = 'disponible';
         }
 
         $lot->update($validated);
 
-        return redirect()->route('lots.index')->with('success', 'Lote actualizado exitosamente.');
+        return redirect()->route('lots.index')
+            ->with('success', 'Lote actualizado exitosamente.');
     }
 
     public function destroy(Lot $lot)
     {
-        // Opcional: Prevenir borrado si tiene planes de pago.
+        // Verificar que no tenga planes de pago
+        if ($lot->paymentPlans()->exists()) {
+            return back()->with('error', 'No se puede eliminar un lote con planes de pago asociados.');
+        }
+
         $lot->delete();
 
-        return redirect()->route('lots.index')->with('success', 'Lote eliminado exitosamente.');
+        return redirect()->route('lots.index')
+            ->with('success', 'Lote eliminado exitosamente.');
     }
 }

@@ -7,17 +7,17 @@ use Illuminate\Http\Request;
 
 class ClientController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index(Request $request)
     {
         $query = Client::query();
 
         if ($request->has('search')) {
-            $query->where('name', 'like', '%' . $request->search . '%')
-                  ->orWhere('email', 'like', '%' . $request->search . '%')
-                  ->orWhere('phone', 'like', '%' . $request->search . '%');
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('email', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('phone', 'like', '%' . $searchTerm . '%');
+            });
         }
 
         $clients = $query->latest()->paginate(10);
@@ -25,17 +25,11 @@ class ClientController extends Controller
         return view('clients.index', compact('clients'));
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
     public function create()
     {
         return view('clients.create');
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -47,34 +41,54 @@ class ClientController extends Controller
 
         Client::create($validated);
 
-        return redirect()->route('clients.index')->with('success', 'Cliente creado exitosamente.');
+        return redirect()->route('clients.index')
+            ->with('success', 'Cliente creado exitosamente.');
     }
 
-    /**
-     * Display the specified resource.
-     */
     public function show(Client $client)
     {
-        // Cargar el cliente con todas sus relaciones anidadas
+        // OPTIMIZACIÓN: Carga eficiente con select específicos y agregaciones
         $client->load([
-            'lots.paymentPlans.service', 
-            'lots.paymentPlans.installments.transactions'
+            'lots' => function ($query) {
+                $query->with([
+                    'paymentPlans' => function ($q) {
+                        $q->with(['service:id,name'])
+                          ->withCount('installments');
+                    },
+                    'paymentPlans.installments' => function ($q) {
+                        $q->with('transactions:id')
+                          ->select('id', 'payment_plan_id', 'installment_number', 'due_date', 
+                                   'base_amount', 'interest_amount', 'status')
+                          ->orderBy('installment_number');
+                    }
+                ]);
+            }
         ]);
+
+        // Precalcular totales para evitar cálculos en la vista
+        foreach ($client->lots as $lot) {
+            foreach ($lot->paymentPlans as $plan) {
+                foreach ($plan->installments as $installment) {
+                    $totalOwed = $installment->base_amount + $installment->interest_amount;
+                    $totalPaid = $installment->transactions->sum('pivot.amount_applied');
+                    
+                    // Añadir propiedades calculadas
+                    $installment->total_owed = $totalOwed;
+                    $installment->total_paid = $totalPaid;
+                    $installment->remaining_balance = max(0, $totalOwed - $totalPaid);
+                    $installment->is_paid = $installment->remaining_balance <= 0.005;
+                }
+            }
+        }
 
         return view('clients.show', compact('client'));
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
     public function edit(Client $client)
     {
         return view('clients.edit', compact('client'));
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, Client $client)
     {
         $validated = $request->validate([
@@ -86,17 +100,20 @@ class ClientController extends Controller
 
         $client->update($validated);
 
-        return redirect()->route('clients.index')->with('success', 'Cliente actualizado exitosamente.');
+        return redirect()->route('clients.index')
+            ->with('success', 'Cliente actualizado exitosamente.');
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
     public function destroy(Client $client)
     {
-        // Opcional: Añadir lógica para prevenir borrado si tiene lotes asociados.
+        // Verificar que no tenga lotes asociados
+        if ($client->lots()->count() > 0) {
+            return back()->with('error', 'No se puede eliminar un cliente con lotes asociados.');
+        }
+
         $client->delete();
 
-        return redirect()->route('clients.index')->with('success', 'Cliente eliminado exitosamente.');
+        return redirect()->route('clients.index')
+            ->with('success', 'Cliente eliminado exitosamente.');
     }
 }

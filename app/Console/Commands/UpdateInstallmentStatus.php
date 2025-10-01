@@ -5,6 +5,8 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Models\Installment;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class UpdateInstallmentStatus extends Command
 {
@@ -38,33 +40,65 @@ class UpdateInstallmentStatus extends Command
 
         $today = Carbon::today();
         $updatedCount = 0;
+        $interestAppliedCount = 0;
 
-        // Buscar cuotas 'pendientes' cuya fecha de vencimiento ya pasó.
-        $installmentsToUpdate = Installment::where('status', 'pendiente')
-            ->where('due_date', '<', $today)
-            ->with('transactions') // Precargar transacciones para calcular adeudo
-            ->get();
+        try {
+            DB::beginTransaction();
 
-        foreach ($installmentsToUpdate as $installment) {
-            // 1. Actualizar el estado a 'vencida'
-            $installment->status = 'vencida';
-            
-            // 2. Calcular interés sobre el saldo restante
-            $totalOwed = $installment->base_amount; // Interés se calcula sobre el capital, no sobre intereses previos
-            $totalPaid = $installment->transactions->sum('pivot.amount_applied');
-            $remainingBalance = $totalOwed - $totalPaid;
+            // Buscar cuotas 'pendientes' cuya fecha de vencimiento ya pasó
+            $installmentsToUpdate = Installment::where('status', 'pendiente')
+                ->where('due_date', '<', $today)
+                ->with('transactions')
+                ->lockForUpdate() // Bloqueo pesimista para evitar race conditions
+                ->get();
 
-            if ($remainingBalance > 0) {
-                $interest = $remainingBalance * self::MONTHLY_INTEREST_RATE;
-                // Usar += para permitir la acumulación si el comando se corre varias veces
-                $installment->interest_amount += round($interest, 2);
+            foreach ($installmentsToUpdate as $installment) {
+                // 1. Actualizar el estado a 'vencida'
+                $installment->status = 'vencida';
+                
+                // 2. Calcular interés SOLO si no se ha aplicado interés previamente
+                // Verificamos si interest_amount es 0 para evitar acumulación
+                if ($installment->interest_amount == 0) {
+                    $totalPaid = $installment->transactions->sum('pivot.amount_applied');
+                    $remainingBalance = $installment->base_amount - $totalPaid;
+
+                    if ($remainingBalance > 0) {
+                        $interest = $remainingBalance * self::MONTHLY_INTEREST_RATE;
+                        $installment->interest_amount = round($interest, 2);
+                        $interestAppliedCount++;
+                        
+                        // Log para auditoría
+                        Log::info('Interés aplicado', [
+                            'installment_id' => $installment->id,
+                            'remaining_balance' => $remainingBalance,
+                            'interest_applied' => $installment->interest_amount,
+                            'date' => $today->toDateString()
+                        ]);
+                    }
+                }
+                
+                $installment->save();
+                $updatedCount++;
             }
-            
-            $installment->save();
-            $updatedCount++;
-        }
 
-        $this->info("Proceso completado. Se actualizaron {$updatedCount} cuotas.");
-        return 0;
+            DB::commit();
+
+            $this->info("Proceso completado exitosamente.");
+            $this->info("Cuotas actualizadas a 'vencida': {$updatedCount}");
+            $this->info("Cuotas con interés aplicado: {$interestAppliedCount}");
+            
+            return Command::SUCCESS;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            $this->error('Error durante la actualización: ' . $e->getMessage());
+            Log::error('Error en UpdateInstallmentStatus', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return Command::FAILURE;
+        }
     }
 }

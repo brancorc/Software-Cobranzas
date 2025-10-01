@@ -11,6 +11,56 @@
         </div>
     </x-slot>
 
+    @php
+        use App\Models\Client;
+        use App\Models\Lot;
+        use App\Models\Transaction;
+        use App\Models\Installment;
+        use Illuminate\Support\Facades\Cache;
+        use Illuminate\Support\Facades\DB;
+
+        // Cachear estadísticas por 5 minutos
+        $stats = Cache::remember('dashboard_stats', 300, function () {
+            return [
+                'total_clients'   => Client::count(),
+                'total_lots'      => Lot::count(),
+                'available_lots'  => Lot::where('status', 'disponible')->count(),
+                'sold_lots'       => Lot::where('status', 'vendido')->count(),
+                'monthly_income'  => Transaction::whereMonth('payment_date', now()->month)
+                                                ->whereYear('payment_date', now()->year)
+                                                ->sum('amount_paid'),
+            ];
+        });
+
+        // Cuotas vencidas optimizadas con joins
+        $overdueInstallments = Installment::select([
+                'installments.id',
+                'installments.due_date',
+                'installments.base_amount',
+                'installments.interest_amount',
+                'clients.name as client_name',
+                'lots.identifier as lot_identifier',
+                'services.name as service_name'
+            ])
+            ->join('payment_plans', 'installments.payment_plan_id', '=', 'payment_plans.id')
+            ->join('lots', 'payment_plans.lot_id', '=', 'lots.id')
+            ->join('clients', 'lots.client_id', '=', 'clients.id')
+            ->join('services', 'payment_plans.service_id', '=', 'services.id')
+            ->where('installments.status', 'vencida')
+            ->orderBy('installments.due_date', 'asc')
+            ->limit(5)
+            ->get()
+            ->map(function ($installment) {
+                $totalOwed = $installment->base_amount + $installment->interest_amount;
+                $totalPaid = DB::table('installment_transaction')
+                    ->where('installment_id', $installment->id)
+                    ->sum('amount_applied');
+                $installment->remaining = max(0, $totalOwed - $totalPaid);
+                return $installment;
+            })
+            ->filter(fn($inst) => $inst->remaining > 0.01);
+    @endphp
+
     <div class="content-wrapper">
         <!-- Estadísticas Rápidas -->
         <div class="grid-responsive mb-6">
@@ -19,7 +69,7 @@
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="stat-label">Total de Clientes</p>
-                        <p class="stat-value">{{ \App\Models\Client::count() }}</p>
+                        <p class="stat-value">{{ $stats['total_clients'] }}</p>
                     </div>
                     <div class="h-12 w-12 rounded-full bg-primary-100 flex items-center justify-center">
                         <svg class="w-6 h-6 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -28,9 +78,7 @@
                     </div>
                 </div>
                 <div class="mt-4 pt-4 border-t border-gray-200">
-                    <a href="{{ route('clients.index') }}" class="link text-sm">
-                        Ver todos los clientes →
-                    </a>
+                    <a href="{{ route('clients.index') }}" class="link text-sm">Ver todos los clientes →</a>
                 </div>
             </div>
 
@@ -39,7 +87,7 @@
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="stat-label">Total de Lotes</p>
-                        <p class="stat-value">{{ \App\Models\Lot::count() }}</p>
+                        <p class="stat-value">{{ $stats['total_lots'] }}</p>
                     </div>
                     <div class="h-12 w-12 rounded-full bg-success-100 flex items-center justify-center">
                         <svg class="w-6 h-6 text-success-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -49,8 +97,8 @@
                 </div>
                 <div class="mt-4 pt-4 border-t border-gray-200">
                     <div class="flex items-center justify-between text-xs text-gray-600">
-                        <span>Disponibles: <strong>{{ \App\Models\Lot::where('status', 'disponible')->count() }}</strong></span>
-                        <span>Vendidos: <strong>{{ \App\Models\Lot::where('status', 'vendido')->count() }}</strong></span>
+                        <span>Disponibles: <strong>{{ $stats['available_lots'] }}</strong></span>
+                        <span>Vendidos: <strong>{{ $stats['sold_lots'] }}</strong></span>
                     </div>
                 </div>
             </div>
@@ -60,7 +108,7 @@
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="stat-label">Ingresos del Mes</p>
-                        <p class="stat-value">${{ number_format(\App\Models\Transaction::whereMonth('payment_date', now()->month)->whereYear('payment_date', now()->year)->sum('amount_paid'), 2) }}</p>
+                        <p class="stat-value">${{ number_format($stats['monthly_income'], 2) }}</p>
                     </div>
                     <div class="h-12 w-12 rounded-full bg-warning-100 flex items-center justify-center">
                         <svg class="w-6 h-6 text-warning-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,9 +117,7 @@
                     </div>
                 </div>
                 <div class="mt-4 pt-4 border-t border-gray-200">
-                    <a href="{{ route('reports.income') }}" class="link text-sm">
-                        Ver reporte completo →
-                    </a>
+                    <a href="{{ route('reports.income') }}" class="link text-sm">Ver reporte completo →</a>
                 </div>
             </div>
         </div>
@@ -131,14 +177,6 @@
         </div>
 
         <!-- Cuotas Vencidas -->
-        @php
-            $overdueInstallments = \App\Models\Installment::where('status', 'vencida')
-                ->with(['paymentPlan.lot.client', 'paymentPlan.service'])
-                ->orderBy('due_date', 'asc')
-                ->take(5)
-                ->get();
-        @endphp
-
         @if($overdueInstallments->count() > 0)
         <div class="card">
             <div class="card-header">
@@ -161,27 +199,21 @@
                     </thead>
                     <tbody>
                         @foreach($overdueInstallments as $installment)
-                            @php
-                                $totalDue = $installment->base_amount + $installment->interest_amount;
-                                $totalPaid = $installment->transactions->sum('pivot.amount_applied');
-                                $remaining = $totalDue - $totalPaid;
-                            @endphp
                             <tr>
                                 <td>
                                     <div class="flex items-center">
                                         <div class="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center mr-2">
-                                            <span class="text-primary-700 font-semibold text-xs">{{ substr($installment->paymentPlan->lot->client->name, 0, 1) }}</span>
+                                            <span class="text-primary-700 font-semibold text-xs">{{ substr($installment->client_name, 0, 1) }}</span>
                                         </div>
-                                        <span class="text-gray-900">{{ $installment->paymentPlan->lot->client->name }}</span>
+                                        <span class="text-gray-900">{{ $installment->client_name }}</span>
                                     </div>
                                 </td>
-                                <td class="text-gray-600">{{ $installment->paymentPlan->lot->identifier }}</td>
-                                <td class="text-gray-600">{{ $installment->paymentPlan->service->name }}</td>
-                                <td class="text-danger-600 font-medium">{{ $installment->due_date->format('d/m/Y') }}</td>
-                                <td class="font-bold text-danger-600">${{ number_format($remaining, 2) }}</td>
+                                <td class="text-gray-600">{{ $installment->lot_identifier }}</td>
+                                <td class="text-gray-600">{{ $installment->service_name }}</td>
+                                <td class="text-danger-600 font-medium">{{ \Carbon\Carbon::parse($installment->due_date)->format('d/m/Y') }}</td>
+                                <td class="font-bold text-danger-600">${{ number_format($installment->remaining, 2) }}</td>
                                 <td class="text-right">
-                                    <a href="{{ route('transactions.create', ['client_id' => $installment->paymentPlan->lot->client->id, 'installment_id' => $installment->id]) }}" 
-                                       class="btn-primary btn-sm">
+                                    <a href="{{ route('transactions.create', ['installment_id' => $installment->id]) }}" class="btn-primary btn-sm">
                                         Pagar
                                     </a>
                                 </td>
