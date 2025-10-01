@@ -1,70 +1,129 @@
 <x-app-layout>
     <x-slot name="header">
-        <div class="flex justify-between items-center">
-            <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-                {{ __('Clientes') }}
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <h2 class="page-title">
+                Gestión de Clientes
             </h2>
-            <a href="{{ route('clients.create') }}" class="inline-flex items-center px-4 py-2 bg-primary-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-primary-700 focus:bg-primary-700 active:bg-primary-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150">
-                {{ __('Agregar Cliente') }}
+            <a href="{{ route('clients.create') }}" class="btn-primary">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                </svg>
+                Agregar Cliente
             </a>
         </div>
     </x-slot>
 
-    <div class="py-12">
-        <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
-            <div class="bg-white overflow-hidden shadow-md sm:rounded-lg">
-                <div class="p-6 border-b border-gray-200">
-                    <!-- Search Form -->
-                    <form method="GET" action="{{ route('clients.index') }}" class="mb-6">
-                        <div class="flex items-center">
-                            <input type="text" name="search" placeholder="Buscar clientes..." class="w-full rounded-md shadow-sm border-gray-300 focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50" value="{{ request('search') }}">
-                            <x-primary-button class="ml-3">Buscar</x-primary-button>
-                        </div>
-                    </form>
-
-                    <!-- Clients Table -->
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full bg-white">
-                            <thead class="bg-gray-100">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
-                                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-200">
-                                @forelse ($clients as $client)
-                                    <tr class="hover:bg-gray-50">
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $client->name }}</td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ $client->email }}</td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ $client->phone }}</td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                            <a href="{{ route('clients.show', $client) }}" class="text-green-600 dark:text-green-400 hover:text-green-900">Ver Estado</a>
-                                            <a href="{{ route('clients.edit', $client) }}" class="text-primary-600 hover:text-primary-900 font-semibold">Editar</a>
-                                            <form action="{{ route('clients.destroy', $client) }}" method="POST" class="inline-block ml-4" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este cliente?');">
-                                                @csrf
-                                                @method('DELETE')
-                                                <button type="submit" class="text-red-600 hover:text-red-900 font-semibold">Eliminar</button>
-                                            </form>
-                                        </td>
-                                    </tr>
-                                @empty
-                                    <tr>
-                                        <td colspan="4" class="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">No se encontraron clientes.</td>
-                                    </tr>
-                                @endforelse
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    @if ($clients->hasPages())
-                        <div class="mt-4 p-4 bg-gray-50 border-t border-gray-200">
-                            {{ $clients->links() }}
-                        </div>
+    <div class="content-wrapper">
+        <div class="card">
+            <!-- Search Bar -->
+            <div class="card-body border-b border-gray-200">
+                <form method="GET" action="{{ route('clients.index') }}" class="search-box">
+                    <input 
+                        type="text" 
+                        name="search" 
+                        placeholder="Buscar por nombre, email o teléfono..." 
+                        class="search-input"
+                        value="{{ request('search') }}"
+                    >
+                    <button type="submit" class="btn-primary">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        Buscar
+                    </button>
+                    @if(request('search'))
+                        <a href="{{ route('clients.index') }}" class="btn-secondary">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                            Limpiar
+                        </a>
                     @endif
-                </div>
+                </form>
             </div>
+
+            <!-- Table -->
+            <div class="overflow-x-auto">
+                <table class="table-custom">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Email</th>
+                            <th>Teléfono</th>
+                            <th class="text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse ($clients as $client)
+                            <tr>
+                                <td>
+                                    <div class="flex items-center">
+                                        <div class="flex-shrink-0 h-10 w-10">
+                                            <div class="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
+                                                <span class="text-primary-700 font-semibold">{{ substr($client->name, 0, 1) }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="ml-4">
+                                            <div class="font-medium text-gray-900">{{ $client->name }}</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="text-gray-600">{{ $client->email ?? 'N/A' }}</td>
+                                <td class="text-gray-600">{{ $client->phone ?? 'N/A' }}</td>
+                                <td>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <a href="{{ route('clients.show', $client) }}" class="link text-xs inline-flex items-center">
+                                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                            </svg>
+                                            Ver Estado
+                                        </a>
+                                        <a href="{{ route('clients.edit', $client) }}" class="link text-xs inline-flex items-center">
+                                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                            </svg>
+                                            Editar
+                                        </a>
+                                        <form action="{{ route('clients.destroy', $client) }}" method="POST" class="inline-block" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este cliente?');">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="link-danger text-xs inline-flex items-center">
+                                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                                </svg>
+                                                Eliminar
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="4">
+                                    <div class="empty-state">
+                                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                                        </svg>
+                                        <p class="empty-state-text mt-4">No se encontraron clientes</p>
+                                        @if(!request('search'))
+                                            <a href="{{ route('clients.create') }}" class="btn-primary mt-4">
+                                                Agregar primer cliente
+                                            </a>
+                                        @endif
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            @if ($clients->hasPages())
+                <div class="pagination">
+                    {{ $clients->links() }}
+                </div>
+            @endif
         </div>
     </div>
 </x-app-layout>
